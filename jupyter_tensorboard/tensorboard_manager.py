@@ -15,6 +15,27 @@ sys.argv = ["tensorboard"]
 
 from tensorboard.backend import application   # noqa
 
+
+def is_tensorboard_greater_than_or_equal_to20():
+    # tensorflow<1.4 will be
+    # (logdir, plugins, multiplexer, reload_interval)
+
+    # tensorflow>=1.4, <1.12 will be
+    # (logdir, plugins, multiplexer, reload_interval, path_prefix)
+
+    # tensorflow>=1.12, <1.14 will be
+    # (logdir, plugins, multiplexer, reload_interval,
+    #  path_prefix='', reload_task='auto')
+
+    # tensorflow 2.0 will be
+    # (flags, plugins, data_provider=None, assets_zip_provider=None,
+    #  deprecated_multiplexer=None)
+
+    s = inspect.signature(application.TensorBoardWSGIApp)
+    first_parameter_name = list(s.parameters.keys())[0]
+    return first_parameter_name == 'flags'
+
+
 try:
     # Tensorboard 0.4.x above series
     from tensorboard import default
@@ -27,7 +48,30 @@ try:
             multiplexer.Reload()
         application.reload_multiplexer = reload_multiplexer
 
-    if hasattr(default, 'PLUGIN_LOADERS') or hasattr(default, '_PLUGINS'):
+    if not hasattr(application, 'standard_tensorboard_wsgi'):
+        from tensorboard import program
+        from tensorboard.backend.event_processing import data_ingester
+
+        def create_tb_app(logdir, reload_interval, purge_orphaned_data):
+            argv = [
+                        "",
+                        "--logdir", logdir,
+                        "--reload_interval", str(reload_interval),
+                        "--purge_orphaned_data", str(purge_orphaned_data),
+                   ]
+            tensorboard = program.TensorBoard()
+            tensorboard.configure(argv)
+            ingester = data_ingester.LocalDataIngester(tensorboard.flags)
+            ingester.start()
+
+            return application.TensorBoardWSGIApp(
+                tensorboard.flags,
+                tensorboard.plugin_loaders,
+                ingester.data_provider,
+                tensorboard.assets_zip_provider,
+                ingester.deprecated_multiplexer)
+
+    elif hasattr(default, 'PLUGIN_LOADERS') or hasattr(default, '_PLUGINS'):
         # Tensorflow 1.10 or above series
         logging.debug("Tensorboard 1.10 or above series detected")
         from tensorboard import program
@@ -109,26 +153,6 @@ def start_reloading_multiplexer(multiplexer, path_to_run, reload_interval):
     return thread
 
 
-def is_tensorboard_greater_than_or_equal_to20():
-    # tensorflow<1.4 will be
-    # (logdir, plugins, multiplexer, reload_interval)
-
-    # tensorflow>=1.4, <1.12 will be
-    # (logdir, plugins, multiplexer, reload_interval, path_prefix)
-
-    # tensorflow>=1.12, <1.14 will be
-    # (logdir, plugins, multiplexer, reload_interval,
-    #  path_prefix='', reload_task='auto')
-
-    # tensorflow 2.0 will be
-    # (flags, plugins, data_provider=None, assets_zip_provider=None,
-    #  deprecated_multiplexer=None)
-
-    s = inspect.signature(application.TensorBoardWSGIApp)
-    first_parameter_name = list(s.parameters.keys())[0]
-    return first_parameter_name == 'flags'
-
-
 def TensorBoardWSGIApp_2x(
         flags, plugins,
         data_provider=None,
@@ -139,7 +163,13 @@ def TensorBoardWSGIApp_2x(
     multiplexer = deprecated_multiplexer
     reload_interval = flags.reload_interval
 
-    path_to_run = application.parse_event_files_spec(logdir)
+    path_to_run = None
+    if hasattr(application, 'parse_event_files_spec'):
+        path_to_run = application.parse_event_files_spec(logdir)
+    else:
+        from tensorboard.backend.event_processing import data_ingester
+        path_to_run = data_ingester._parse_event_files_spec(logdir)
+
     if reload_interval:
         thread = start_reloading_multiplexer(
             multiplexer, path_to_run, reload_interval)
