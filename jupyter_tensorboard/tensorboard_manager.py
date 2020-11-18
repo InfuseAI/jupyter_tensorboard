@@ -147,16 +147,11 @@ def TensorBoardWSGIApp_2x(
         application.reload_multiplexer(multiplexer, path_to_run)
         thread = None
 
-    db_uri = None
-    db_connection_provider = None
-
     plugin_name_to_instance = {}
 
     from tensorboard.plugins import base_plugin
     context = base_plugin.TBContext(
         data_provider=data_provider,
-        db_connection_provider=db_connection_provider,
-        db_uri=db_uri,
         flags=flags,
         logdir=flags.logdir,
         multiplexer=deprecated_multiplexer,
